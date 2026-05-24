@@ -35,8 +35,6 @@ echo "Region:  $REGION"
 
 Replace `YOUR_PROJECT_ID` with your actual GCP project ID.
 
----
-
 ### Step 3 — Enable Required GCP APIs
 
 ```bash
@@ -54,8 +52,6 @@ gcloud services enable \
   iamcredentials.googleapis.com \
   --project="$PROJECT_ID" --quiet
 ```
-
----
 
 ### Step 4 — Create GCS Buckets
 
@@ -79,9 +75,7 @@ echo "Raw bucket:  gs://${RAW_BUCKET}"
 echo "DAGs bucket: gs://${DAGS_BUCKET}"
 ```
 
----
-
-### Step 6 — Create BigQuery Datasets and Tables
+### Step 5 — Create BigQuery Datasets and Tables
 
 ```bash
 bq mk --dataset --location="$REGION" --description="Smogon raw data layer" "${PROJECT_ID}:smogon_raw"
@@ -98,36 +92,7 @@ bq query --use_legacy_sql=false --project_id="$PROJECT_ID" --location="$REGION" 
 echo "BigQuery datasets created: smogon_raw, smogon_staging, smogon_dw"
 ```
 
----
-
-### Step 7 — Create Cloud Composer Environment
-
-```bash
-PROJECT_ID=$(gcloud config get-value project)
-COMPOSER_ENV="smogon-composer-env"
-
-gcloud composer environments create "$COMPOSER_ENV" \
-  --project="$PROJECT_ID" \
-  --location="$REGION" \
-  --image-version="composer-2-airflow-2" \
-  --node-count=3 \
-  --machine-type="n1-standard-4" \
-  --disk-size=50 \
-  --env-variables="PROJECT_ID=${PROJECT_ID},RAW_BUCKET=smogon-raw-${PROJECT_ID},DAGS_BUCKET=smogon-dags-${PROJECT_ID}" \
-  --network="default" \
-  --subnetwork="default"
-
-echo "Composer environment created: $COMPOSER_ENV"
-```
-
-> This takes **15–20 minutes** to provision. Cloud Shell may disconnect — that's fine. Reconnect and check status with:
-> ```bash
-> gcloud composer environments describe "$COMPOSER_ENV" --location="$REGION"
-> ```
-
----
-
-### Step 8 — Create Service Account and IAM
+### Step 6 — Create Service Account and IAM
 
 ```bash
 SA_NAME="smogon-pipeline-sa"
@@ -136,6 +101,10 @@ SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 gcloud iam service-accounts create "$SA_NAME" \
   --project="$PROJECT_ID" \
   --display-name="Smogon ETL Pipeline Service Account"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/composer.worker" --quiet
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -155,32 +124,42 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/composer.worker" --quiet
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/logging.logWriter" --quiet
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/monitoring.metricWriter" --quiet
 
-echo "Service account: $SA_EMAIL"
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@cloudcomposer-accounts.iam.gserviceaccount.com" \
+  --role="roles/composer.ServiceAgentV2Ext"
 ```
 
----
-
-### Step 9 — Assign Service Account to Composer
+### Step 7 — Create Cloud Composer Environment
 
 ```bash
-gcloud composer environments update "$COMPOSER_ENV" \
+PROJECT_ID=$(gcloud config get-value project)
+COMPOSER_ENV="smogon-composer-env"
+
+gcloud composer environments create "$COMPOSER_ENV" \
+  --project="$PROJECT_ID" \
   --location="$REGION" \
-  --service-account="$SA_EMAIL"
+  --image-version="composer-2-airflow-2" \
+  --service-account="$SA_EMAIL" \
+  --env-variables="RAW_BUCKET=smogon-raw-${PROJECT_ID},DAGS_BUCKET=smogon-dags-${PROJECT_ID}" \
+  --network="default" \
+  --subnetwork="default"
+
+echo "Composer environment created: $COMPOSER_ENV"
 ```
 
----
+> This takes **15–20 minutes** to provision. Cloud Shell may disconnect — that's fine. Reconnect and check status with:
+> ```bash
+> gcloud composer environments describe "$COMPOSER_ENV" --location="$REGION"
+> ```
 
-### Step 10 — Deploy DAGs and Pipeline Code
+### Step 8 — Deploy DAGs and Pipeline Code
 
 ```bash
 DAGS_BUCKET="smogon-dags-${PROJECT_ID}"
@@ -230,8 +209,6 @@ gcloud composer environments update "$COMPOSER_ENV" \
 6. Click **Trigger**
 7. Click on the DAG name to watch the task tree in real time
 
----
-
 ### Option B — Via Cloud Shell Command Line
 
 ```bash
@@ -240,11 +217,7 @@ gcloud composer environments run "$COMPOSER_ENV" \
   trigger_dag -- smogon_master_dag
 ```
 
----
-
 ### Option C — Run Individual Steps (gen9ou only)
-
-If you want to run steps one at a time (useful for debugging):
 
 ```bash
 # Step 1: Discover available data
@@ -318,7 +291,7 @@ gsutil ls "gs://smogon-raw-${PROJECT_ID}/usage/"
 
 When triggering `smogon_master_dag` with `{"format": "gen9ou"}`, tasks run in this order:
 
-```
+```text
 smogon_01_discover
         ↓
 smogon_02_ingest_usage  → smogon_raw.usage_stats
@@ -342,10 +315,10 @@ Each step is idempotent — re-running skips already-ingested months.
 | Problem | Solution |
 |---------|----------|
 | Composer environment is "CREATING" for 20+ min | Normal — wait and re-check with `gcloud composer environments describe` |
-| DAGs not appearing in Airflow UI | Wait 5 min after deploy. If still missing, re-run step 8. |
-| "Service account not found" error | Run step 7 to assign the SA to the Composer environment |
-| BigQuery table not found | Run step 4 to execute all DDL scripts |
-| Permission denied on GCS | Verify step 6 IAM bindings were applied correctly |
+| DAGs not appearing in Airflow UI | Wait 5 min after deploy. If still missing, re-run Step 8. |
+| "Service account not found" error | Ensure Step 6 completed before Step 7 |
+| BigQuery table not found | Run Step 5 to execute all DDL scripts |
+| Permission denied on GCS | Verify Step 5 IAM bindings were applied correctly |
 
 ---
 
