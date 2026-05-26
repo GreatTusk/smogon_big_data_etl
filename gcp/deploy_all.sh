@@ -8,7 +8,7 @@ set -euo pipefail
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${REGION:-us-central1}"
+REGION="${REGION:-us-west1}"
 SA_NAME="smogon-pipeline-sa"
 COMPOSER_ENV="smogon-composer-env"
 COMPOSER_IMAGE_VERSION="composer-2.9.7-airflow-2.9.3"
@@ -202,8 +202,8 @@ else
     --project="$PROJECT_ID" \
     --location="$REGION" \
     --image-version="$COMPOSER_IMAGE_VERSION" \
-    --service-account="$SA_EMAIL" \
-    --env-variables="PROJECT_ID=${PROJECT_ID},RAW_BUCKET=${RAW_BUCKET},DAGS_BUCKET=${DAGS_BUCKET}" \
+    --service-account="${SA_EMAIL}" \
+    --env-variables="RAW_BUCKET=${RAW_BUCKET},DAGS_BUCKET=${DAGS_BUCKET}" \
     --network="default" \
     --subnetwork="default"
 fi
