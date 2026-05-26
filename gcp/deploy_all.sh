@@ -41,7 +41,7 @@ echo "  SA      : $SA_EMAIL"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
-# ─── HELPER: verify a project-level IAM binding ──────────────────────────────
+# ─── HELPER: verify a project-level IAM binding exists ────────────────────────
 # Returns 0 if present, 1 if missing.
 check_binding() {
   local MEMBER="$1" ROLE="$2"
@@ -50,29 +50,12 @@ check_binding() {
     --flatten="bindings[].members" \
     --filter="bindings.role=${ROLE} AND bindings.members=${MEMBER}" \
     --format="value(bindings.members)" 2>/dev/null)
-  if [ -n "$FOUND" ]; then
-    ok "${ROLE}"
-    return 0
-  else
-    echo -e "  ${RED}❌ MISSING${NC}  ${ROLE}  →  ${MEMBER}"
+  if [ -z "$FOUND" ]; then
+    echo "  ❌ MISSING  ${ROLE}  →  ${MEMBER}"
     return 1
-  fi
-}
-
-# ─── HELPER: apply + immediately verify a binding ────────────────────────────
-bind_and_verify() {
-  local MEMBER="$1" ROLE="$2"
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="$MEMBER" --role="$ROLE" 2>/dev/null || true
-  if ! check_binding "$MEMBER" "$ROLE"; then
-    echo ""
-    warn "Binding failed to apply (common in Qwiklabs/restricted environments)."
-    warn "Grant it manually:"
-    warn "  Cloud Console → IAM & Admin → IAM → Grant Access"
-    warn "  Principal : $MEMBER"
-    warn "  Role      : $ROLE"
-    echo ""
-    die "Cannot continue with missing IAM binding. Fix it, then re-run this script."
+  else
+    echo "  ✅ OK       ${ROLE}  →  ${MEMBER}"
+    return 0
   fi
 }
 
@@ -168,16 +151,12 @@ ok "BigQuery schema applied."
 # ─── STEP 6: Service account + IAM ───────────────────────────────────────────
 info "Step 6 — Creating service account and IAM bindings..."
 
-if gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" &>/dev/null; then
-  ok "Service account $SA_EMAIL already exists."
-else
-  gcloud iam service-accounts create "$SA_NAME" \
-    --project="$PROJECT_ID" \
-    --display-name="Smogon ETL Pipeline Service Account"
-  ok "Service account created."
-fi
+# Create the service account (idempotent — ignore already-exists error)
+gcloud iam service-accounts create "$SA_NAME" \
+  --project="$PROJECT_ID" \
+  --display-name="Smogon ETL Pipeline Service Account" 2>/dev/null || true
 
-info "Binding roles to pipeline service account (verifying each one)..."
+# Roles for the pipeline service account
 SA_ROLES=(
   roles/composer.worker
   roles/bigquery.dataEditor
@@ -187,15 +166,29 @@ SA_ROLES=(
   roles/logging.logWriter
   roles/monitoring.metricWriter
 )
+
+echo ""
+echo "Binding roles to $SA_EMAIL ..."
 for ROLE in "${SA_ROLES[@]}"; do
-  bind_and_verify "serviceAccount:${SA_EMAIL}" "$ROLE"
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="$ROLE" --quiet 2>/dev/null
+  check_binding "serviceAccount:${SA_EMAIL}" "$ROLE" \
+    || echo "    → Grant this manually in Cloud Console → IAM"
 done
 
-info "Binding roles/composer.ServiceAgentV2Ext to Composer service agent..."
-info "(agent: $COMPOSER_AGENT)"
-bind_and_verify "serviceAccount:${COMPOSER_AGENT}" "roles/composer.ServiceAgentV2Ext"
+# Role for the Composer service agent (project-level, not SA-resource-level)
+COMPOSER_AGENT="service-${PROJECT_NUMBER}@cloudcomposer-accounts.iam.gserviceaccount.com"
+echo ""
+echo "Binding roles/composer.ServiceAgentV2Ext to Composer service agent ..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${COMPOSER_AGENT}" \
+  --role="roles/composer.ServiceAgentV2Ext" --quiet 2>/dev/null
+check_binding "serviceAccount:${COMPOSER_AGENT}" "roles/composer.ServiceAgentV2Ext" \
+  || echo "    → Grant this manually in Cloud Console → IAM"
 
-ok "All IAM bindings verified."
+echo ""
+echo "If any binding shows ❌ MISSING: grant it manually in Cloud Console → IAM & Admin → IAM, then re-run check_binding to confirm."
 
 # ─── STEP 7: Composer environment ────────────────────────────────────────────
 info "Step 7 — Creating Cloud Composer environment (this takes 15–20 minutes)..."
