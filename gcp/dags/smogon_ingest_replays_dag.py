@@ -1,6 +1,7 @@
 """
 smogon_ingest_replays_dag.py — Replay ingestion DAG
 Fetches Pokemon Showdown replays via the replay API.
+Defaults to gen9ou when no format is specified.
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -13,15 +14,16 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
+def _get_format(**context):
+    dag_conf = context.get("dag_run", {}).conf if context.get("dag_run") else {}
+    return dag_conf.get("format", "gen9ou")
+
 def _ingest_replays(**context):
     from pipeline.ingest_replays import run
-    from pipeline.bigquery_client import execute_query
-    formats = execute_query(
-        "SELECT DISTINCT format_id FROM `smogon_staging.formats`"
-    ) or []
-    for fmt_row in formats:
-        run(fmt_row["format_id"])
-    print(f"Ingested replays for {len(formats)} formats")
+    from pipeline import config
+    fmt = _get_format(**context)
+    print(f"Ingesting replays for format: {fmt}")
+    run(format_filter=fmt)
 
 with DAG(
     dag_id="smogon_ingest_replays",

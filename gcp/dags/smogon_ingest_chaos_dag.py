@@ -1,6 +1,7 @@
 """
 smogon_ingest_chaos_dag.py — Chaos JSON ingestion DAG
 Downloads chaos JSON files, parses all sub-sections, loads to BigQuery.
+Defaults to gen9ou when no format is specified.
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -15,15 +16,22 @@ default_args = {
     "max_retry_delay": timedelta(minutes=10),
 }
 
-def _get_pending_sources():
+def _get_format(**context):
+    dag_conf = context.get("dag_run", {}).conf if context.get("dag_run") else {}
+    return dag_conf.get("format", "gen9ou")
+
+def _get_pending_sources(**context):
     from pipeline.bigquery_client import execute_query
-    sql = """
+    from pipeline import config
+    fmt = _get_format(**context)
+    sql = f"""
     SELECT month, format_id, elo_tier
-    FROM `smogon_raw.discovered_sources`
+    FROM `{config.PROJECT_ID}.{config.RAW_DATASET}.discovered_sources`
     WHERE source_type = 'chaos'
+      AND format_id = '{fmt}'
       AND (month, format_id, elo_tier) NOT IN (
         SELECT DISTINCT month, format_id, elo_tier
-        FROM `smogon_raw.chaos_json`
+        FROM `{config.PROJECT_ID}.{config.RAW_DATASET}.chaos_json`
       )
     ORDER BY month DESC
     LIMIT 10
@@ -33,7 +41,7 @@ def _get_pending_sources():
 
 def _ingest_chaos(**context):
     from pipeline.ingest_chaos import run
-    sources = _get_pending_sources()
+    sources = _get_pending_sources(**context)
     if not sources:
         print("No pending chaos sources to ingest")
         return

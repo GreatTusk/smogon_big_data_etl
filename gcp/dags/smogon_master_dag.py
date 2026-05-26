@@ -1,6 +1,7 @@
 """
 smogon_master_dag.py — Master orchestrator DAG
 Triggers individual step DAGs in sequence using TriggerDagRunOperator.
+Passes format config (default gen9ou) to all child DAGs.
 Scheduled monthly on the 1st at 6:00 AM.
 """
 from datetime import datetime, timedelta
@@ -15,6 +16,8 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "email_on_failure": True,
 }
+
+CONF_TEMPLATE = "{{ dag_run.conf.get('format', 'gen9ou') if dag_run else 'gen9ou' }}"
 
 with DAG(
     dag_id="smogon_master",
@@ -33,6 +36,7 @@ with DAG(
     discover = TriggerDagRunOperator(
         task_id="trigger_discover",
         trigger_dag_id="smogon_discover",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
         trigger_rule="all_done",
@@ -41,6 +45,7 @@ with DAG(
     ingest_usage = TriggerDagRunOperator(
         task_id="trigger_ingest_usage",
         trigger_dag_id="smogon_ingest_usage",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
     )
@@ -48,6 +53,7 @@ with DAG(
     ingest_chaos = TriggerDagRunOperator(
         task_id="trigger_ingest_chaos",
         trigger_dag_id="smogon_ingest_chaos",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
     )
@@ -55,6 +61,7 @@ with DAG(
     ingest_leads = TriggerDagRunOperator(
         task_id="trigger_ingest_leads",
         trigger_dag_id="smogon_ingest_leads",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
     )
@@ -62,6 +69,7 @@ with DAG(
     ingest_metagame = TriggerDagRunOperator(
         task_id="trigger_ingest_metagame",
         trigger_dag_id="smogon_ingest_metagame",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
     )
@@ -69,6 +77,7 @@ with DAG(
     ingest_replays = TriggerDagRunOperator(
         task_id="trigger_ingest_replays",
         trigger_dag_id="smogon_ingest_replays",
+        conf={"format": CONF_TEMPLATE},
         wait_for_completion=True,
         allowed_states=["success"],
     )

@@ -210,7 +210,7 @@ else
     --location="$REGION" \
     --image-version="$COMPOSER_IMAGE_VERSION" \
     --service-account="$SA_EMAIL" \
-    --env-variables="RAW_BUCKET=${RAW_BUCKET},DAGS_BUCKET=${DAGS_BUCKET}" \
+    --env-variables="PROJECT_ID=${PROJECT_ID},RAW_BUCKET=${RAW_BUCKET},DAGS_BUCKET=${DAGS_BUCKET}" \
     --network="default" \
     --subnetwork="default"
 fi

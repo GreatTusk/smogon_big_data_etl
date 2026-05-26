@@ -9,7 +9,7 @@ import requests
 from typing import List, Tuple
 
 from . import config
-from .bigquery_client import batch_insert, execute_query, get_existing_keys
+from .bigquery_client import batch_insert, execute_query, get_existing_keys, table_ref
 
 logger = logging.getLogger(__name__)
 
@@ -113,14 +113,13 @@ def get_discovered_keys() -> set:
     )
 
 
-def run(months: List[str] = None) -> List[str]:
+def run(months: List[str] = None, format_filter: str = None) -> List[str]:
     if months is None:
         months = discover_months()
     discovered_keys = get_discovered_keys()
     made_key = lambda m, f, e, t: f"{m}|{f}|{e}|{t}"
 
     # Insert months
-    month_rows = [{"month": m} for m in months]
     batch_insert(config.STAGING_DATASET, "months", ["month"], [(m,) for m in months])
 
     # Insert elo tiers
@@ -136,6 +135,12 @@ def run(months: List[str] = None) -> List[str]:
     for month in months:
         logger.info("Discovering sources for %s", month)
         usage, chaos, leads_, metagame_ = discover_sources_for_month(month)
+
+        if format_filter:
+            usage = [r for r in usage if r[1] == format_filter]
+            chaos = [r for r in chaos if r[1] == format_filter]
+            leads_ = [r for r in leads_ if r[1] == format_filter]
+            metagame_ = [r for r in metagame_ if r[1] == format_filter]
 
         for row in usage:
             key = made_key(row[0], row[1], row[2], "usage")
@@ -187,7 +192,7 @@ def run(months: List[str] = None) -> List[str]:
     # Insert formats
     existing_fmts = set()
     existing = execute_query(
-        f"SELECT format_id FROM `{config.PROJECT_ID}.{config.STAGING_DATASET}.formats`"
+        f"SELECT format_id FROM `{table_ref(config.STAGING_DATASET, 'formats')}`"
     )
     if existing:
         existing_fmts = {r["format_id"] for r in existing}

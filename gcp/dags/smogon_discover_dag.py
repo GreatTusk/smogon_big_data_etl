@@ -1,6 +1,7 @@
 """
 smogon_discover_dag.py — Discover sources DAG
 Scrapes Smogon.com/stats index to find available months, formats, and Elo tiers.
+Defaults to gen9ou when no format is specified.
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -16,9 +17,15 @@ default_args = {
     "max_retry_delay": timedelta(minutes=10),
 }
 
+def _get_format(**context):
+    dag_conf = context.get("dag_run", {}).conf if context.get("dag_run") else {}
+    return dag_conf.get("format", "gen9ou")
+
 def _discover_sources(**context):
     from pipeline.discover import run
-    months = run()
+    fmt = _get_format(**context)
+    print(f"Discovering sources for format: {fmt}")
+    months = run(format_filter=fmt)
     context["ti"].xcom_push(key="discovered_months", value=months)
     return months
 

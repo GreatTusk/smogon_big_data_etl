@@ -1,5 +1,6 @@
 """
 smogon_ingest_metagame_dag.py — Metagame stats ingestion DAG
+Defaults to gen9ou when no format is specified.
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -12,15 +13,22 @@ default_args = {
     "retry_delay": timedelta(minutes=2),
 }
 
-def _get_pending_sources():
+def _get_format(**context):
+    dag_conf = context.get("dag_run", {}).conf if context.get("dag_run") else {}
+    return dag_conf.get("format", "gen9ou")
+
+def _get_pending_sources(**context):
     from pipeline.bigquery_client import execute_query
-    sql = """
+    from pipeline import config
+    fmt = _get_format(**context)
+    sql = f"""
     SELECT month, format_id, elo_tier
-    FROM `smogon_raw.discovered_sources`
+    FROM `{config.PROJECT_ID}.{config.RAW_DATASET}.discovered_sources`
     WHERE source_type = 'metagame'
+      AND format_id = '{fmt}'
       AND (month, format_id, elo_tier) NOT IN (
         SELECT DISTINCT month, format_id, elo_tier
-        FROM `smogon_staging.metagame`
+        FROM `{config.PROJECT_ID}.{config.STAGING_DATASET}.metagame`
       )
     ORDER BY month DESC
     LIMIT 20
@@ -30,7 +38,7 @@ def _get_pending_sources():
 
 def _ingest_metagame(**context):
     from pipeline.ingest_metagame import run
-    sources = _get_pending_sources()
+    sources = _get_pending_sources(**context)
     if not sources:
         print("No pending metagame sources to ingest")
         return

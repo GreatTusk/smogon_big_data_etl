@@ -53,18 +53,26 @@ def download_string(
     bucket = get_bucket()
     path = blob_path(source_type, month, filename)
     blob = bucket.blob(path)
-    if not blob.exists():
+    try:
+        if not blob.exists():
+            return None
+        raw = blob.download_as_bytes()
+        if filename.endswith(".gz"):
+            raw = gzip.decompress(raw)
+        return raw.decode("utf-8")
+    except Exception as e:
+        logger.warning("Could not download gs://%s/%s: %s", config.RAW_BUCKET, path, e)
         return None
-    raw = blob.download_as_bytes()
-    if filename.endswith(".gz"):
-        raw = gzip.decompress(raw)
-    return raw.decode("utf-8")
 
 
 def blob_exists(source_type: str, month: str, filename: str) -> bool:
     bucket = get_bucket()
     path = blob_path(source_type, month, filename)
-    return bucket.blob(path).exists()
+    try:
+        return bucket.blob(path).exists()
+    except Exception as e:
+        logger.warning("Could not check gs://%s/%s: %s", config.RAW_BUCKET, path, e)
+        return False
 
 
 def upload_json(

@@ -9,7 +9,7 @@ import gzip
 import requests
 
 from . import config
-from .bigquery_client import batch_insert, get_existing_keys, execute_dml
+from .bigquery_client import batch_insert, get_existing_keys, execute_dml, table_ref
 from .gcs_utils import upload_json, download_json
 
 logger = logging.getLogger(__name__)
@@ -138,49 +138,40 @@ def run(month: str, format_id: str, elo_tier: int):
         batch_insert(config.STAGING_DATASET, dw_table, cols, batch)
         # MERGE into dw layer
         col_names = ", ".join(cols)
-        key_cols = ["month", "format_id", "elo_tier"]
+
+        dw_key = ["month", "format_id", "elo_tier"]
         if dw_table == "teammates":
-            key_cols.extend(["pokemon1", "pokemon2"])
+            dw_key.extend(["pokemon1", "pokemon2"])
         elif dw_table == "checks_counters":
-            key_cols.extend(["pokemon", "counter_pokemon"])
+            dw_key.extend(["pokemon", "counter_pokemon"])
         elif dw_table == "spreads":
-            key_cols.extend(["pokemon", "spread_str"])
+            dw_key.extend(["pokemon", "spread_str"])
+        elif dw_table == "pokemon_details":
+            dw_key.append("pokemon")
         else:
-            key_cols.append("pokemon")
-            if dw_table in ("abilities", "items", "moves", "tera_types"):
-                key_cols.append(dw_table[:-1] if dw_table == "abilities" else dw_table[:-1])
-
-        # Build a simpler MERGE for each table using the staging data filtered to this month/format/elo
-        src_filter = f"WHERE month = '{month}' AND format_id = '{format_id}' AND elo_tier = {elo_tier}"
-        on_clause = " AND ".join(f"T.{k} = S.{k}" for k in key_cols)
-
-        # For tables where we need a uniqueness approach
-        if dw_table == "pokemon_details":
-            dw_key = ["month", "format_id", "elo_tier", "pokemon"]
-        elif dw_table == "checks_counters":
-            dw_key = ["month", "format_id", "elo_tier", "pokemon", "counter_pokemon"]
-        elif dw_table == "teammates":
-            dw_key = ["month", "format_id", "elo_tier", "pokemon1", "pokemon2"]
-        elif dw_table == "spreads":
-            dw_key = ["month", "format_id", "elo_tier", "pokemon", "spread_str"]
-        else:
-            extra = dw_table[:-1] if dw_table.endswith("s") and dw_table != "checks_counters" else "item"
-            if extra == "abilitie":
-                extra = "ability"
-            elif extra == "tera_type":
-                extra = "tera_type"
-            dw_key = ["month", "format_id", "elo_tier", "pokemon", extra]
+            dw_key.append("pokemon")
+            singular = {
+                "abilities": "ability",
+                "items": "item",
+                "moves": "move",
+                "tera_types": "tera_type",
+            }
+            dw_key.append(singular.get(dw_table, dw_table[:-1]))
 
         on_clause = " AND ".join(f"T.{k} = S.{k}" for k in dw_key)
+        update_cols = [c for c in cols if c not in dw_key]
+        set_clause = ", ".join(f"{c} = S.{c}" for c in update_cols) if update_cols else ""
 
         merge_sql = f"""
-        MERGE `{config.PROJECT_ID}.{config.DW_DATASET}.fact_{dw_table}` T
+        MERGE `{table_ref(config.DW_DATASET, f'fact_{dw_table}')}` T
         USING (
           SELECT {col_names}
-          FROM `{config.PROJECT_ID}.{config.STAGING_DATASET}.{dw_table}`
+          FROM `{table_ref(config.STAGING_DATASET, dw_table)}`
           {src_filter}
         ) S
         ON {on_clause}
+        WHEN MATCHED THEN
+          UPDATE SET {set_clause}
         WHEN NOT MATCHED THEN
           INSERT ROW
         """

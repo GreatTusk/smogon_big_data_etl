@@ -226,7 +226,9 @@ gcloud composer environments update "$COMPOSER_ENV" \
 
 ---
 
-## Phase 2: Running the Pipeline for gen9ou
+## Phase 2: Running the Pipeline for gen9ou (Default)
+
+The pipeline now defaults to **gen9ou**. To override, pass a different format via the DAG config.
 
 ### Option A — Via Airflow Web UI (recommended for first run)
 
@@ -234,6 +236,7 @@ gcloud composer environments update "$COMPOSER_ENV" \
 2. Click **Airflow Web UI**
 3. Find `smogon_master_dag` → click the **Play** button
 4. Enter config: `{"format": "gen9ou"}` → **Trigger**
+   - Omit the config to use gen9ou by default
 
 ### Option B — Via Cloud Shell
 

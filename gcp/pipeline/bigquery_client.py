@@ -14,14 +14,21 @@ _client = None
 def get_client() -> bigquery.Client:
     global _client
     if _client is None:
-        _client = bigquery.Client(project=config.PROJECT_ID)
+        project = config.PROJECT_ID or None
+        _client = bigquery.Client(project=project)
     return _client
+
+
+def table_ref(dataset: str, table_name: str) -> str:
+    if config.PROJECT_ID:
+        return f"{config.PROJECT_ID}.{dataset}.{table_name}"
+    return f"{dataset}.{table_name}"
 
 
 def table_exists(dataset: str, table_name: str) -> bool:
     client = get_client()
     try:
-        client.get_table(f"{config.PROJECT_ID}.{dataset}.{table_name}")
+        client.get_table(table_ref(dataset, table_name))
         return True
     except NotFound:
         return False
@@ -36,14 +43,14 @@ def insert_rows(
     if not rows:
         return 0
     client = get_client()
-    table_ref = f"{config.PROJECT_ID}.{dataset}.{table_name}"
+    table_ref_full = table_ref(dataset, table_name)
     batch_size = batch_size or config.BATCH_SIZE
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i: i + batch_size]
         errors = client.insert_rows_json(table_ref, batch)
         if errors:
-            logger.error("BigQuery insert errors for %s: %s", table_ref, errors[:3])
+            logger.error("BigQuery insert errors for %s: %s", table_ref_full, errors[:3])
             raise RuntimeError(f"BigQuery insert failed: {errors}")
         total += len(batch)
     logger.debug("Inserted %d rows into %s", total, table_ref)
@@ -75,7 +82,7 @@ def merge_from_staging(
     key_conditions = " AND ".join(
         f"T.{k} = S.{k}" for k in join_keys
     )
-    full_target = f"{config.PROJECT_ID}.{target_dataset}.{target_table}"
+    full_target = table_ref(target_dataset, target_table)
     merge_sql = f"""
     MERGE `{full_target}` T
     USING ({source_sql}) S
@@ -93,7 +100,7 @@ def get_existing_keys(
 ) -> set:
     cols = ", ".join(key_columns)
     key_expr = ", ".join(f"CAST({c} AS STRING)" for c in key_columns)
-    sql = f"SELECT DISTINCT CONCAT({key_expr}) AS _key FROM `{config.PROJECT_ID}.{dataset}.{table_name}`"
+    sql = f"SELECT DISTINCT CONCAT({key_expr}) AS _key FROM `{table_ref(dataset, table_name)}`"
     rows = execute_query(sql)
     if not rows:
         return set()

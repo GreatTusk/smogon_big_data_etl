@@ -96,24 +96,17 @@ def run(month: str, format_id: str, elo_tier: int):
         return
 
     # Insert raw payload
-    raw_payload = text[:10000] if len(text) > 10000 else text
-    from .bigquery_client import execute_dml
-    raw_sql = f"""
-    INSERT INTO `{config.PROJECT_ID}.{config.RAW_DATASET}.usage_stats`
-    (month, format_id, elo_tier, raw_payload, source_url)
-    VALUES ('{month}', '{format_id}', {elo_tier}, @payload, '{config.SMOGON_BASE}/{month}/{format_id}-{elo_tier}.txt')
-    """
-    # Use batch insert for raw too
     raw_rows = [{"month": month, "format_id": format_id, "elo_tier": elo_tier,
                   "raw_payload": raw_payload,
                   "source_url": f"{config.SMOGON_BASE}/{month}/{format_id}-{elo_tier}.txt"}]
     from .bigquery_client import insert_rows
+    from .bigquery_client import table_ref
     insert_rows(config.RAW_DATASET, "usage_stats", raw_rows)
 
     # Update month total battles
     if total_battles:
         execute_dml(
-            f"UPDATE `{config.PROJECT_ID}.{config.STAGING_DATASET}.months` "
+            f"UPDATE `{table_ref(config.STAGING_DATASET, 'months')}` "
             f"SET total_battles = {total_battles} WHERE month = '{month}'"
         )
 
@@ -127,18 +120,13 @@ def run(month: str, format_id: str, elo_tier: int):
     batch_insert(config.STAGING_DATASET, "usage_stats", cols, vals)
 
     # Upsert into dimensional layer via MERGE
-    col_names = ", ".join(cols)
-    val_exprs = ", ".join([f"'{month}'", f"'{format_id}'", str(elo_tier), "pokemon",
-                           "rank", "usage_pct", "raw_count", "raw_pct",
-                           "real_count", "real_pct"])
-    # Use a temp CTE approach with MERGE
     merge_sql = f"""
-    MERGE `{config.PROJECT_ID}.{config.DW_DATASET}.fact_usage` T
+    MERGE `{table_ref(config.DW_DATASET, 'fact_usage')}` T
     USING (
-      SELECT {col_names} FROM (
-        SELECT {col_names},
+      SELECT month, format_id, elo_tier, pokemon, rank, usage_pct, raw_count, raw_pct, real_count, real_pct FROM (
+        SELECT month, format_id, elo_tier, pokemon, rank, usage_pct, raw_count, raw_pct, real_count, real_pct,
                ROW_NUMBER() OVER (PARTITION BY month, format_id, elo_tier, pokemon ORDER BY rank) AS rn
-        FROM `{config.PROJECT_ID}.{config.STAGING_DATASET}.usage_stats`
+        FROM `{table_ref(config.STAGING_DATASET, 'usage_stats')}`
         WHERE month = '{month}' AND format_id = '{format_id}' AND elo_tier = {elo_tier}
       ) WHERE rn = 1
     ) S

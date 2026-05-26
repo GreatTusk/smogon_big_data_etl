@@ -1,6 +1,7 @@
 """
 smogon_ingest_usage_dag.py — Usage stats ingestion DAG
 Downloads usage .txt files for discovered sources, parses, and loads to BigQuery.
+Defaults to gen9ou when no format is specified.
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -16,15 +17,22 @@ default_args = {
     "max_retry_delay": timedelta(minutes=10),
 }
 
+def _get_format(**context):
+    dag_conf = context.get("dag_run", {}).conf if context.get("dag_run") else {}
+    return dag_conf.get("format", "gen9ou")
+
 def _get_pending_sources(**context):
     from pipeline.bigquery_client import execute_query
-    sql = """
+    from pipeline import config
+    fmt = _get_format(**context)
+    sql = f"""
     SELECT month, format_id, elo_tier
-    FROM `smogon_raw.discovered_sources`
+    FROM `{config.PROJECT_ID}.{config.RAW_DATASET}.discovered_sources`
     WHERE source_type = 'usage'
+      AND format_id = '{fmt}'
       AND (month, format_id, elo_tier) NOT IN (
         SELECT DISTINCT month, format_id, elo_tier
-        FROM `smogon_raw.usage_stats`
+        FROM `{config.PROJECT_ID}.{config.RAW_DATASET}.usage_stats`
       )
     ORDER BY month DESC
     LIMIT 20

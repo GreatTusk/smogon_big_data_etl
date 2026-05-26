@@ -8,6 +8,7 @@ SMOGON_BASE = "https://www.smogon.com/stats"
 GEN9_START = "2022-11"
 
 DEFAULT_ELO_TIERS = [0, 1500, 1630, 1695, 1760, 1825]
+DEFAULT_FORMAT = "gen9ou"
 
 DEFAULT_FORMATS = [
     "gen9ou", "gen9ubers", "gen9uu", "gen9nu", "gen9pu", "gen9zu",
