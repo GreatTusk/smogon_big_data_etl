@@ -6,7 +6,7 @@ import gzip
 import argparse
 from tqdm import tqdm
 
-from .config import SMOGON_BASE, BATCH_SIZE
+from .config import SMOGON_BASE
 from .warehouse_client import WarehouseClient
 from .storage_client import StorageClient
 from .db import (
@@ -14,6 +14,11 @@ from .db import (
     TABLE_MOVES, TABLE_SPREADS, TABLE_TERA_TYPES, TABLE_TEAMMATES,
     TABLE_CHECKS_COUNTERS, TABLE_DISCOVERED_SOURCES,
 )
+
+CHAOS_TABLES = [
+    TABLE_POKEMON_DETAILS, TABLE_ABILITIES, TABLE_ITEMS, TABLE_MOVES,
+    TABLE_SPREADS, TABLE_TERA_TYPES, TABLE_TEAMMATES, TABLE_CHECKS_COUNTERS,
+]
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +53,12 @@ def parse_spread_key(key):
     return nature, evs
 
 
-def process_chaos_data(wh, data, month, format_id, elo_tier):
+def process_chaos_data(data, month, format_id, elo_tier):
     if not data:
-        return
+        return None
     pokemon_data = data.get("data", {})
     if not pokemon_data:
-        return
+        return None
     batch_details = []
     batch_abilities = []
     batch_items = []
@@ -105,31 +110,26 @@ def process_chaos_data(wh, data, month, format_id, elo_tier):
                 elif section == "Teammates":
                     p1, p2 = sorted([poke_name, key])
                     batch_teammates.append((month, format_id, elo_tier, p1, p2, score))
-    inserts = [
-        (batch_details, TABLE_POKEMON_DETAILS, SCHEMA_MAP[TABLE_POKEMON_DETAILS]),
-        (batch_abilities, TABLE_ABILITIES, SCHEMA_MAP[TABLE_ABILITIES]),
-        (batch_items, TABLE_ITEMS, SCHEMA_MAP[TABLE_ITEMS]),
-        (batch_moves, TABLE_MOVES, SCHEMA_MAP[TABLE_MOVES]),
-        (batch_spreads, TABLE_SPREADS, SCHEMA_MAP[TABLE_SPREADS]),
-        (batch_tera, TABLE_TERA_TYPES, SCHEMA_MAP[TABLE_TERA_TYPES]),
-        (batch_teammates, TABLE_TEAMMATES, SCHEMA_MAP[TABLE_TEAMMATES]),
-        (batch_checks, TABLE_CHECKS_COUNTERS, SCHEMA_MAP[TABLE_CHECKS_COUNTERS]),
-    ]
-    for batch, tname, schema in inserts:
-        for i in range(0, len(batch), BATCH_SIZE):
-            wh.write_rows(tname, schema, batch[i:i + BATCH_SIZE])
+    return {
+        TABLE_POKEMON_DETAILS: batch_details,
+        TABLE_ABILITIES: batch_abilities,
+        TABLE_ITEMS: batch_items,
+        TABLE_MOVES: batch_moves,
+        TABLE_SPREADS: batch_spreads,
+        TABLE_TERA_TYPES: batch_tera,
+        TABLE_TEAMMATES: batch_teammates,
+        TABLE_CHECKS_COUNTERS: batch_checks,
+    }
 
 
 def run(format_filter=None):
     wh = WarehouseClient()
     storage = StorageClient()
-    for tname in [TABLE_POKEMON_DETAILS, TABLE_ABILITIES, TABLE_ITEMS, TABLE_MOVES,
-                  TABLE_SPREADS, TABLE_TERA_TYPES, TABLE_TEAMMATES, TABLE_CHECKS_COUNTERS]:
+    for tname in CHAOS_TABLES:
         wh.ensure_table(tname, SCHEMA_MAP[tname])
 
     rows = wh.query(
         f"SELECT DISTINCT month, format_id, elo_tier FROM `{wh.table_ref(TABLE_DISCOVERED_SOURCES)}` WHERE source_type = 'chaos'"
-        + (f" AND format_id = @format_filter" if format_filter else "")
     )
     if format_filter:
         rows = [r for r in rows if r["format_id"] == format_filter]
@@ -143,12 +143,22 @@ def run(format_filter=None):
         logger.info("All chaos data already ingested")
         return
     logger.info("Ingesting %d chaos JSON files", len(todo))
+
+    accum = {tname: [] for tname in CHAOS_TABLES}
     for month, fmt, elo in tqdm(todo, desc="Chaos JSON"):
         data = fetch_chaos_json(storage, month, fmt, elo)
         if not data:
             logger.warning("No chaos data for %s %s-%d", month, fmt, elo)
             continue
-        process_chaos_data(wh, data, month, fmt, elo)
+        result = process_chaos_data(data, month, fmt, elo)
+        if result is None:
+            continue
+        for tname in CHAOS_TABLES:
+            accum[tname].extend(result[tname])
+
+    for tname in CHAOS_TABLES:
+        if accum[tname]:
+            wh.write_rows(tname, SCHEMA_MAP[tname], accum[tname])
     logger.info("Chaos ingestion complete")
 
 

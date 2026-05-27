@@ -106,41 +106,39 @@ def run(months=None):
     if months is None:
         months = discover_months()
 
-    for month in months:
-        wh.write_rows(TABLE_MONTHS, SCHEMA_MAP[TABLE_MONTHS],
-                      [{"month": month}])
-
-    for elo in DEFAULT_ELO_TIERS:
-        wh.write_rows(TABLE_ELO_TIERS, SCHEMA_MAP[TABLE_ELO_TIERS],
-                      [{"elo_tier": elo}])
+    all_months = [{"month": m} for m in months]
+    all_elo_tiers = [{"elo_tier": e} for e in DEFAULT_ELO_TIERS]
+    all_ds_rows = []
+    seen_formats = set()
 
     for month in tqdm(months, desc="Discovering sources"):
         usage, chaos, leads_, metagame_ = discover_sources_for_month(month)
-
-        ds_rows = []
-        fmt_rows = []
         for row in usage:
-            ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "usage"})
-            fmt_rows.append({"format_id": row[1], "generation": 9, "tier": row[1].replace("gen9", "")})
+            all_ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "usage"})
+            seen_formats.add(row[1])
         for row in chaos:
-            ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "chaos"})
-            if not any(f["format_id"] == row[1] for f in fmt_rows):
-                fmt_rows.append({"format_id": row[1], "generation": 9, "tier": row[1].replace("gen9", "")})
+            all_ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "chaos"})
+            seen_formats.add(row[1])
         for row in leads_:
-            ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "leads"})
-            if not any(f["format_id"] == row[1] for f in fmt_rows):
-                fmt_rows.append({"format_id": row[1], "generation": 9, "tier": row[1].replace("gen9", "")})
+            all_ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "leads"})
+            seen_formats.add(row[1])
         for row in metagame_:
-            ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "metagame"})
-            if not any(f["format_id"] == row[1] for f in fmt_rows):
-                fmt_rows.append({"format_id": row[1], "generation": 9, "tier": row[1].replace("gen9", "")})
+            all_ds_rows.append({"month": row[0], "format_id": row[1], "elo_tier": row[2], "source_type": "metagame"})
+            seen_formats.add(row[1])
 
-        if ds_rows:
-            wh.write_rows(TABLE_DISCOVERED_SOURCES, SCHEMA_MAP[TABLE_DISCOVERED_SOURCES], ds_rows)
-        if fmt_rows:
-            wh.write_rows(TABLE_FORMATS, SCHEMA_MAP[TABLE_FORMATS], fmt_rows)
+    all_format_rows = [
+        {"format_id": fmt, "generation": 9, "tier": fmt.replace("gen9", "")}
+        for fmt in sorted(seen_formats)
+    ]
 
-    fmt_count = wh.count_rows(TABLE_FORMATS)
+    wh.write_rows(TABLE_MONTHS, SCHEMA_MAP[TABLE_MONTHS], all_months)
+    wh.write_rows(TABLE_ELO_TIERS, SCHEMA_MAP[TABLE_ELO_TIERS], all_elo_tiers)
+    if all_ds_rows:
+        wh.write_rows(TABLE_DISCOVERED_SOURCES, SCHEMA_MAP[TABLE_DISCOVERED_SOURCES], all_ds_rows)
+    if all_format_rows:
+        wh.write_rows(TABLE_FORMATS, SCHEMA_MAP[TABLE_FORMATS], all_format_rows)
+
+    fmt_count = len(seen_formats)
     logger.info("Discovered %d months, %d formats", len(months), fmt_count)
     for m in months:
         logger.info("  %s", m)

@@ -5,7 +5,7 @@ import gzip
 import argparse
 from tqdm import tqdm
 
-from .config import SMOGON_BASE, BATCH_SIZE
+from .config import SMOGON_BASE
 from .warehouse_client import WarehouseClient
 from .storage_client import StorageClient
 from .db import SCHEMA_MAP, TABLE_LEADS, TABLE_DISCOVERED_SOURCES
@@ -69,7 +69,6 @@ def run(format_filter=None):
 
     rows = wh.query(
         f"SELECT DISTINCT month, format_id, elo_tier FROM `{wh.table_ref(TABLE_DISCOVERED_SOURCES)}` WHERE source_type = 'leads'"
-        + (f" AND format_id = @format_filter" if format_filter else "")
     )
     if format_filter:
         rows = [r for r in rows if r["format_id"] == format_filter]
@@ -83,6 +82,7 @@ def run(format_filter=None):
         logger.info("All leads data already ingested")
         return
     logger.info("Ingesting %d leads files", len(todo))
+    all_rows = []
     for month, fmt, elo in tqdm(todo, desc="Leads"):
         text = fetch_leads_text(storage, month, fmt, elo)
         if not text:
@@ -90,11 +90,11 @@ def run(format_filter=None):
         parsed = parse_leads_table(text)
         if not parsed:
             continue
-        batch = [{"month": month, "format_id": fmt, "elo_tier": elo,
-                   "pokemon": p, "rank": r, "usage_pct": u, "raw_count": rc}
-                 for r, p, u, rc in parsed]
-        for i in range(0, len(batch), BATCH_SIZE):
-            wh.write_rows(TABLE_LEADS, SCHEMA_MAP[TABLE_LEADS], batch[i:i + BATCH_SIZE])
+        for r, p, u, rc in parsed:
+            all_rows.append({"month": month, "format_id": fmt, "elo_tier": elo,
+                             "pokemon": p, "rank": r, "usage_pct": u, "raw_count": rc})
+    if all_rows:
+        wh.write_rows(TABLE_LEADS, SCHEMA_MAP[TABLE_LEADS], all_rows)
     logger.info("Leads ingestion complete")
 
 

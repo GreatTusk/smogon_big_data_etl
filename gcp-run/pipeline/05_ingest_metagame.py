@@ -50,7 +50,6 @@ def run(format_filter=None):
 
     rows = wh.query(
         f"SELECT DISTINCT month, format_id, elo_tier FROM `{wh.table_ref(TABLE_DISCOVERED_SOURCES)}` WHERE source_type = 'metagame'"
-        + (f" AND format_id = @format_filter" if format_filter else "")
     )
     if format_filter:
         rows = [r for r in rows if r["format_id"] == format_filter]
@@ -64,6 +63,7 @@ def run(format_filter=None):
         logger.info("All metagame data already ingested")
         return
     logger.info("Ingesting %d metagame files", len(todo))
+    all_rows = []
     for month, fmt, elo in tqdm(todo, desc="Metagame"):
         text = fetch_metagame_text(storage, month, fmt, elo)
         if not text:
@@ -72,9 +72,10 @@ def run(format_filter=None):
         if not parsed:
             continue
         for playstyle, pct in parsed:
-            wh.write_rows(TABLE_METAGAME, SCHEMA_MAP[TABLE_METAGAME],
-                          [{"month": month, "format_id": fmt, "elo_tier": elo,
-                            "playstyle": playstyle, "usage_pct": pct}])
+            all_rows.append({"month": month, "format_id": fmt, "elo_tier": elo,
+                             "playstyle": playstyle, "usage_pct": pct})
+    if all_rows:
+        wh.write_rows(TABLE_METAGAME, SCHEMA_MAP[TABLE_METAGAME], all_rows)
     logger.info("Metagame ingestion complete")
 
 

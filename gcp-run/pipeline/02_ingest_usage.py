@@ -5,10 +5,10 @@ import argparse
 import gzip
 from tqdm import tqdm
 
-from .config import SMOGON_BASE, BATCH_SIZE
+from .config import SMOGON_BASE
 from .warehouse_client import WarehouseClient
 from .storage_client import StorageClient
-from .db import SCHEMA_MAP, TABLE_USAGE_STATS, TABLE_MONTHS, TABLE_DISCOVERED_SOURCES
+from .db import SCHEMA_MAP, TABLE_USAGE_STATS, TABLE_DISCOVERED_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,6 @@ def run(format_filter=None):
 
     rows = wh.query(
         f"SELECT DISTINCT month, format_id, elo_tier FROM `{wh.table_ref(TABLE_DISCOVERED_SOURCES)}` WHERE source_type = 'usage'"
-        + (f" AND format_id = @format_filter" if format_filter else "")
     )
     if format_filter:
         rows = [r for r in rows if r["format_id"] == format_filter]
@@ -104,30 +103,24 @@ def run(format_filter=None):
         logger.info("All usage data already ingested")
         return
     logger.info("Ingesting %d usage stats files", len(todo))
+    all_rows = []
     for month, fmt, elo in tqdm(todo, desc="Usage stats"):
         text = fetch_usage_text(storage, month, fmt, elo)
         if not text:
             logger.warning("No data for %s %s-%d", month, fmt, elo)
             continue
-        data_lines, total_battles = parse_usage_table(text)
+        data_lines, _ = parse_usage_table(text)
         if not data_lines:
             continue
-        if total_battles:
-            wh.write_rows(TABLE_MONTHS, SCHEMA_MAP[TABLE_MONTHS],
-                          [{"month": month, "total_battles": total_battles}])
-        batch = []
         for rank, pokemon, usage_pct, raw_count, raw_pct, real_count, real_pct in data_lines:
-            batch.append({
+            all_rows.append({
                 "month": month, "format_id": fmt, "elo_tier": elo,
                 "pokemon": pokemon, "rank": rank,
                 "usage_pct": usage_pct, "raw_count": raw_count,
                 "raw_pct": raw_pct, "real_count": real_count, "real_pct": real_pct,
             })
-            if len(batch) >= BATCH_SIZE:
-                wh.write_rows(TABLE_USAGE_STATS, SCHEMA_MAP[TABLE_USAGE_STATS], batch)
-                batch = []
-        if batch:
-            wh.write_rows(TABLE_USAGE_STATS, SCHEMA_MAP[TABLE_USAGE_STATS], batch)
+    if all_rows:
+        wh.write_rows(TABLE_USAGE_STATS, SCHEMA_MAP[TABLE_USAGE_STATS], all_rows)
     logger.info("Usage ingestion complete")
 
 

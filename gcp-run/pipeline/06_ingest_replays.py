@@ -3,11 +3,10 @@ import logging
 import re
 import aiohttp
 import argparse
-import json
 from tqdm import tqdm
 from datetime import datetime
 
-from .config import REPLAY_SEARCH_URL, REPLAY_BASE, MAX_CONCURRENT_LOGS, REPLAY_PAGES, MIN_ELO_REPLAY, BATCH_SIZE
+from .config import REPLAY_SEARCH_URL, REPLAY_BASE, MAX_CONCURRENT_LOGS, REPLAY_PAGES, MIN_ELO_REPLAY
 from .warehouse_client import WarehouseClient
 from .storage_client import StorageClient
 from .db import SCHEMA_MAP, TABLE_REPLAYS, TABLE_REPLAY_TEAMS, TABLE_DISCOVERED_SOURCES
@@ -116,10 +115,10 @@ async def _run_async(format_id, wh, storage, pages=REPLAY_PAGES):
                 won = 1 if winner == side_name else 0
                 for poke in team:
                     tbatch.append({"replay_id": rid, "side": side_name, "pokemon": poke, "won": won})
-        for i in range(0, len(rbatch), BATCH_SIZE):
-            wh.write_rows(TABLE_REPLAYS, SCHEMA_MAP[TABLE_REPLAYS], rbatch[i:i + BATCH_SIZE])
-        for i in range(0, len(tbatch), BATCH_SIZE):
-            wh.write_rows(TABLE_REPLAY_TEAMS, SCHEMA_MAP[TABLE_REPLAY_TEAMS], tbatch[i:i + BATCH_SIZE])
+        if rbatch:
+            wh.write_rows(TABLE_REPLAYS, SCHEMA_MAP[TABLE_REPLAYS], rbatch)
+        if tbatch:
+            wh.write_rows(TABLE_REPLAY_TEAMS, SCHEMA_MAP[TABLE_REPLAY_TEAMS], tbatch)
         logger.info("Ingested %d replays with %d team entries for %s", len(rbatch), len(tbatch), format_id)
 
 
@@ -131,7 +130,6 @@ def run(format_filter=None, pages=REPLAY_PAGES):
 
     rows = wh.query(
         f"SELECT DISTINCT format_id FROM `{wh.table_ref(TABLE_DISCOVERED_SOURCES)}` WHERE source_type = 'usage'"
-        + (f" AND format_id = @format_filter" if format_filter else "")
     )
     if format_filter:
         rows = [r for r in rows if r["format_id"] == format_filter]
