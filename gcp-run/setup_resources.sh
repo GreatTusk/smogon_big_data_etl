@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# GCP ETL Resource Provisioning Script
-# Run this from Cloud Shell to create all required infrastructure.
-# Usage: bash setup_resources.sh
+# GCP ETL Full Setup & Deploy Script
+# Run this from Cloud Shell to provision infrastructure, build, deploy, and execute.
+# Usage: bash setup_resources.sh [gen9ou|gen9uu|...]
 
 set -euo pipefail
 
 # ---- Configuration - edit these or set env vars before running ----
-PROJECT_ID="${PROJECT_ID:?"PROJECT_ID must be set"}"
-REGION="${REGION:-us-central1}"
+PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
+REGION="${REGION:-us-west1}"
 BUCKET_NAME="${BUCKET_NAME:-smogon-etl-${PROJECT_ID}}"
 BQ_DATASET="${BQ_DATASET:-smogon_etl}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-smogon-etl-sa}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+IMAGE_NAME="${IMAGE_NAME:-gcr.io/${PROJECT_ID}/smogon-etl}"
+JOB_NAME="${JOB_NAME:-smogon-etl}"
+FORMAT="${1:-gen9ou}"
 
-echo "=== GCP ETL Resource Setup ==="
+echo "=== GCP ETL Full Setup & Deploy ==="
 echo "Project:      ${PROJECT_ID}"
 echo "Region:       ${REGION}"
 echo "Bucket:       ${BUCKET_NAME}"
 echo "BQ Dataset:   ${BQ_DATASET}"
 echo "Service Acct: ${SERVICE_ACCOUNT}"
+echo "Image:        ${IMAGE_NAME}"
+echo "Format:       ${FORMAT}"
 echo "=============================="
 
 # 1. Set project
@@ -79,23 +84,42 @@ bq add-iam-policy-binding \
     "${PROJECT_ID}:${BQ_DATASET}"
 
 echo ""
-echo "=== Setup Complete ==="
+echo "=== Infrastructure Ready ==="
 echo "Service Account: ${SERVICE_ACCOUNT}"
 echo "Bucket:          gs://${BUCKET_NAME}"
 echo "BigQuery Dataset: ${PROJECT_ID}:${BQ_DATASET}"
 echo ""
-echo "To run the ETL as a Cloud Run job:"
-echo "  1. Build and push the image:"
-echo "     gcloud builds submit --tag ${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/smogon-etl"
+
+# 9. Build and push container image
+echo ">>> Building and pushing container image..."
+cd "$(dirname "$0")"
+gcloud builds submit --tag "${IMAGE_NAME}" --project="${PROJECT_ID}"
+
+# 10. Create or update Cloud Run job
+echo ">>> Creating Cloud Run job..."
+if gcloud run jobs describe "${JOB_NAME}" --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
+    echo "Job ${JOB_NAME} already exists, updating..."
+    gcloud run jobs update "${JOB_NAME}" \
+        --image "${IMAGE_NAME}" \
+        --region "${REGION}" \
+        --service-account "${SERVICE_ACCOUNT}" \
+        --set-env-vars PROJECT_ID="${PROJECT_ID}",REGION="${REGION}",BUCKET_NAME="${BUCKET_NAME}",BQ_DATASET="${BQ_DATASET}" \
+        --memory 4Gi --cpu 2 --task-timeout 3600
+else
+    gcloud run jobs create "${JOB_NAME}" \
+        --image "${IMAGE_NAME}" \
+        --region "${REGION}" \
+        --service-account "${SERVICE_ACCOUNT}" \
+        --set-env-vars PROJECT_ID="${PROJECT_ID}",REGION="${REGION}",BUCKET_NAME="${BUCKET_NAME}",BQ_DATASET="${BQ_DATASET}" \
+        --memory 4Gi --cpu 2 --task-timeout 3600
+fi
+
+# 11. Execute the job
+echo ">>> Executing Cloud Run job with format=${FORMAT}..."
+gcloud run jobs execute "${JOB_NAME}" --region="${REGION}" --args="--format,${FORMAT}"
+
 echo ""
-echo "  2. Create the Cloud Run job:"
-echo "     gcloud run jobs create smogon-etl \\"
-echo "        --image ${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/smogon-etl \\"
-echo "        --region ${REGION} \\"
-echo "        --service-account ${SERVICE_ACCOUNT} \\"
-echo "        --set-env-vars PROJECT_ID=${PROJECT_ID},REGION=${REGION},BUCKET_NAME=${BUCKET_NAME},BQ_DATASET=${BQ_DATASET} \\"
-echo "        --memory 4Gi --cpu 2 --task-timeout 3600"
-echo ""
-echo "  3. Execute the job:"
-echo "     gcloud run jobs execute smogon-etl --region ${REGION}"
-echo ""
+echo "============================================"
+echo "  ALL DONE - Pipeline running in Cloud Run! "
+echo "============================================"
+echo "Watch logs: gcloud run jobs executions list --job=${JOB_NAME} --region=${REGION}"

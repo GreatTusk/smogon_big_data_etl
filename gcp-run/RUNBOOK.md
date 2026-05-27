@@ -31,77 +31,80 @@ Smogon.com / Pokemon Showdown
 |---|---|---|
 | `PROJECT_ID` | GCP project ID | `my-project` |
 | `REGION` | GCP region | `us-central1` |
-| `BUCKET_NAME` | Cloud Storage bucket | `smogon-etl-my-project` |
-| `BQ_DATASET` | BigQuery dataset name | `smogon_etl` |
-| `RUN_ID` | Unique run identifier (auto-generated if empty) | `run_20250101_120000` |
+| `BUCKET_NAME` | Cloud Storage bucket (default: `smogon-etl-<project>`) | `smogon-etl-my-project` |
+| `BQ_DATASET` | BigQuery dataset name (default: `smogon_etl`) | `smogon_etl` |
 
 Optional:
 
-| Variable | Description |
-|---|---|
-| `SMOGON_FORMAT` | Process only this format (e.g., `gen9ou`) |
-| `SMOGON_SKIP_DISCOVER` | Set to `true` to skip the discovery step |
+| Variable | Default | Description |
+|---|---|---|
+| `IMAGE_NAME` | `gcr.io/${PROJECT_ID}/smogon-etl` | Container image tag |
+| `JOB_NAME` | `smogon-etl` | Cloud Run job name |
+| `SERVICE_ACCOUNT_NAME` | `smogon-etl-sa` | Service account name |
 
-## Setup (one-time)
+## One-Command Setup, Deploy & Run
 
-Run the provisioning script from Cloud Shell:
+From Cloud Shell, run:
 
 ```bash
 export PROJECT_ID="your-gcp-project"
+bash setup_resources.sh gen9ou
+```
+
+This single command does **everything**:
+1. Enables required APIs
+2. Creates service account, bucket, and BigQuery dataset
+3. Grants IAM permissions (least-privilege)
+4. Builds and pushes the container image (via Cloud Build)
+5. Creates the Cloud Run job
+6. Executes the job with `--format gen9ou`
+
+To process all formats instead of a single one, omit the argument:
+```bash
 bash setup_resources.sh
 ```
 
-This creates:
-- Service account with minimal permissions
-- Cloud Storage bucket with uniform bucket-level access
-- BigQuery dataset in the chosen region
-- IAM role bindings for the service account
+> **Note:** The `setup_resources.sh` script is idempotent — you can re-run it safely.
 
-## Build & Deploy
+## Manual Steps (if not using the all-in-one script)
 
-### 1. Build and push the container image
-
+### 1. Provision infrastructure
 ```bash
-gcloud builds submit --tag ${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/smogon-etl
+# Clone, set vars, and run only the provisioning portion
+export PROJECT_ID="your-gcp-project"
+bash setup_resources.sh   # will stop at error if PROJECT_ID unset
+# Or just run the individual steps manually
 ```
 
-### 2. Create the Cloud Run job
+### 2. Build and push the container image
+```bash
+gcloud builds submit --tag gcr.io/${PROJECT_ID}/smogon-etl
+```
 
+### 3. Create the Cloud Run job
 ```bash
 gcloud run jobs create smogon-etl \
-    --image ${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/smogon-etl \
+    --image gcr.io/${PROJECT_ID}/smogon-etl \
     --region ${REGION} \
     --service-account smogon-etl-sa@${PROJECT_ID}.iam.gserviceaccount.com \
     --set-env-vars PROJECT_ID=${PROJECT_ID},REGION=${REGION},BUCKET_NAME=${BUCKET_NAME},BQ_DATASET=${BQ_DATASET} \
     --memory 4Gi --cpu 2 --task-timeout 3600
 ```
 
-### 3. Execute the job
-
+### 4. Execute the job
 ```bash
-gcloud run jobs execute smogon-etl --region ${REGION}
-```
+# Single format
+gcloud run jobs execute smogon-etl --region ${REGION} --args "--format,gen9ou"
 
-To process a single format:
-
-```bash
-gcloud run jobs execute smogon-etl --region ${REGION} \
-    --args "--format,gen9ou"
-```
-
-To skip the discovery step (if sources are already discovered):
-
-```bash
-gcloud run jobs execute smogon-etl --region ${REGION} \
-    --args "--skip-discover"
+# Skip discovery (if sources already discovered)
+gcloud run jobs execute smogon-etl --region ${REGION} --args "--skip-discover"
 ```
 
 ## Local Testing
 
-You can run the pipeline locally with simulated GCP credentials:
+You can run the pipeline locally with GCP credentials:
 
 ```bash
-# Using Application Default Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 export PROJECT_ID="my-project"
 export REGION="us-central1"
