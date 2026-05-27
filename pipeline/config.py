@@ -62,6 +62,14 @@ MAX_CONCURRENT_LOGS = 12
 REPLAY_PAGES = 10
 MIN_ELO_REPLAY = 1500
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+import os
+from pathlib import Path
+
+_SMOGON_DB_DIR = Path(os.environ.get("SMOGON_DB_DIR", Path(__file__).resolve().parent.parent))
+
+DB_PATH = _SMOGON_DB_DIR / "pokemon_stats.db"
+DATA_DIR = _SMOGON_DB_DIR / "data"
+
+_SMOGON_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 BATCH_SIZE = 500
