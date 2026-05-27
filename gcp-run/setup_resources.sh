@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # GCP ETL Full Setup & Deploy Script
-# Run this from Cloud Shell to provision infrastructure, build, deploy, and execute.
 # Usage: bash setup_resources.sh [gen9ou|gen9uu|...]
 
 set -euo pipefail
 
-# ---- Configuration - edit these or set env vars before running ----
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${REGION:-us-west1}"
+REGION="${REGION:-us-east1}"
 BUCKET_NAME="${BUCKET_NAME:-smogon-etl-${PROJECT_ID}}"
 BQ_DATASET="${BQ_DATASET:-smogon_etl}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-smogon-etl-sa}"
@@ -42,7 +40,8 @@ gcloud services enable \
 
 # 3. Create service account (idempotent)
 echo ">>> Creating service account..."
-if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" --project="${PROJECT_ID}" &>/dev/null; then
+if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
+        --project="${PROJECT_ID}" &>/dev/null; then
     gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
         --display-name="Smogon ETL Service Account" \
         --project="${PROJECT_ID}"
@@ -62,9 +61,15 @@ else
 fi
 
 # 5. Create BigQuery dataset (idempotent)
+# FIX: use bq ls | grep instead of bq show, which doesn't support --exists_ok
 echo ">>> Creating BigQuery dataset..."
-bq --location="${REGION}" mk --dataset --exists_ok "${PROJECT_ID}:${BQ_DATASET}"
-echo "Ensured dataset: ${PROJECT_ID}:${BQ_DATASET}"
+if bq ls -d --project_id="${PROJECT_ID}" | grep -qw "${BQ_DATASET}"; then
+    echo "Dataset already exists: ${PROJECT_ID}:${BQ_DATASET}"
+else
+    bq --location="${REGION}" mk --dataset \
+        --project_id="${PROJECT_ID}" "${BQ_DATASET}"
+    echo "Created dataset: ${PROJECT_ID}:${BQ_DATASET}"
+fi
 
 # 6. Grant project-level BigQuery job user
 echo ">>> Granting IAM roles..."
@@ -75,7 +80,9 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --quiet
 
 # 7. Grant bucket-level storage.objectAdmin
-gsutil iam ch "serviceAccount:${SERVICE_ACCOUNT}:roles/storage.objectAdmin" "gs://${BUCKET_NAME}"
+gsutil iam ch \
+    "serviceAccount:${SERVICE_ACCOUNT}:roles/storage.objectAdmin" \
+    "gs://${BUCKET_NAME}"
 
 # 8. Grant dataset-level BigQuery dataEditor
 bq add-iam-policy-binding \
@@ -85,8 +92,8 @@ bq add-iam-policy-binding \
 
 echo ""
 echo "=== Infrastructure Ready ==="
-echo "Service Account: ${SERVICE_ACCOUNT}"
-echo "Bucket:          gs://${BUCKET_NAME}"
+echo "Service Account:  ${SERVICE_ACCOUNT}"
+echo "Bucket:           gs://${BUCKET_NAME}"
 echo "BigQuery Dataset: ${PROJECT_ID}:${BQ_DATASET}"
 echo ""
 
@@ -96,27 +103,30 @@ cd "$(dirname "$0")"
 gcloud builds submit --tag "${IMAGE_NAME}" --project="${PROJECT_ID}"
 
 # 10. Create or update Cloud Run job
-echo ">>> Creating Cloud Run job..."
-if gcloud run jobs describe "${JOB_NAME}" --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
+echo ">>> Creating/updating Cloud Run job..."
+if gcloud run jobs describe "${JOB_NAME}" \
+        --region="${REGION}" --project="${PROJECT_ID}" &>/dev/null; then
     echo "Job ${JOB_NAME} already exists, updating..."
     gcloud run jobs update "${JOB_NAME}" \
-        --image "${IMAGE_NAME}" \
-        --region "${REGION}" \
-        --service-account "${SERVICE_ACCOUNT}" \
-        --set-env-vars PROJECT_ID="${PROJECT_ID}",REGION="${REGION}",BUCKET_NAME="${BUCKET_NAME}",BQ_DATASET="${BQ_DATASET}" \
-        --memory 4Gi --cpu 2 --task-timeout 3600
+        --image="${IMAGE_NAME}" \
+        --region="${REGION}" \
+        --service-account="${SERVICE_ACCOUNT}" \
+        --set-env-vars="PROJECT_ID=${PROJECT_ID},REGION=${REGION},BUCKET_NAME=${BUCKET_NAME},BQ_DATASET=${BQ_DATASET}" \
+        --memory=4Gi --cpu=2 --task-timeout=3600
 else
     gcloud run jobs create "${JOB_NAME}" \
-        --image "${IMAGE_NAME}" \
-        --region "${REGION}" \
-        --service-account "${SERVICE_ACCOUNT}" \
-        --set-env-vars PROJECT_ID="${PROJECT_ID}",REGION="${REGION}",BUCKET_NAME="${BUCKET_NAME}",BQ_DATASET="${BQ_DATASET}" \
-        --memory 4Gi --cpu 2 --task-timeout 3600
+        --image="${IMAGE_NAME}" \
+        --region="${REGION}" \
+        --service-account="${SERVICE_ACCOUNT}" \
+        --set-env-vars="PROJECT_ID=${PROJECT_ID},REGION=${REGION},BUCKET_NAME=${BUCKET_NAME},BQ_DATASET=${BQ_DATASET}" \
+        --memory=4Gi --cpu=2 --task-timeout=3600
 fi
 
 # 11. Execute the job
 echo ">>> Executing Cloud Run job with format=${FORMAT}..."
-gcloud run jobs execute "${JOB_NAME}" --region="${REGION}" --args="--format,${FORMAT}"
+gcloud run jobs execute "${JOB_NAME}" \
+    --region="${REGION}" \
+    --args="--format=${FORMAT}"
 
 echo ""
 echo "============================================"
