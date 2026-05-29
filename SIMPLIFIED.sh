@@ -93,3 +93,9 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --condition=None \
     --quiet
 
+# 8. (new) Grant BigQuery service agent read access to the bucket
+BIGQUERY_AGENT="serviceAccount:service-${PROJECT_ID}@bigquery-encryption.iam.gserviceaccount.com"
+
+gsutil iam ch \
+  "serviceAccount:${BIGQUERY_AGENT}:roles/storage.objectViewer" \
+  "gs://${BUCKET_NAME}"
